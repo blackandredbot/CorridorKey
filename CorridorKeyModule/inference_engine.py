@@ -78,7 +78,7 @@ class CorridorKeyEngine:
         if not os.path.isfile(self.checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
 
-        checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=True)
         state_dict = checkpoint.get("state_dict", checkpoint)
 
         # Fix Compiled Model Prefix & Handle PosEmbed Mismatch
