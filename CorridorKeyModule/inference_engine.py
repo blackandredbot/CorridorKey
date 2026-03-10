@@ -248,9 +248,6 @@ class CorridorKeyEngine:
             else:
                 orig_srgb = image  # already sRGB
 
-            # Despill the original — simple math, no neural network needed
-            orig_despilled = cu.despill(orig_srgb, green_limit_mode="average", strength=despill_strength)
-
             # Tight blend ramp: alpha 0.95 → 0.99 maps to t 0.0 → 1.0
             # t=1 means "use original", t=0 means "use model FG"
             EDGE_LOW = 0.95
@@ -258,7 +255,10 @@ class CorridorKeyEngine:
             t = np.clip((res_alpha - EDGE_LOW) / (EDGE_HIGH - EDGE_LOW), 0.0, 1.0)
 
             # Blend: solid interior gets original, edges get model reconstruction
-            res_fg = res_fg * (1.0 - t) + orig_despilled * t
+            # NOTE: do NOT despill orig_srgb here — the downstream despill pass
+            # (step B) handles both the original and model pixels uniformly.
+            # Pre-despilling would cause double-despill → yellowish color shift.
+            res_fg = res_fg * (1.0 - t) + orig_srgb * t
 
         # --- ADVANCED COMPOSITING ---
 
