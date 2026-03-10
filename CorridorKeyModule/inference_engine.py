@@ -232,20 +232,44 @@ class CorridorKeyEngine:
 
         # --- ADVANCED COMPOSITING ---
 
-        # A0. Matte edge tightening
-        # The model's resize round-trip (original → 2048 → original) softens
-        # the alpha transition zone.  A small morphological erosion pulls the
-        # soft edge inward, then a Gaussian re-feathers it so it doesn't look
-        # hard-cut.  This is image-agnostic — no guide needed.
-        if self.tiler is not None:
-            erode_px = 2
+        # A0. Resolution-scaled matte tightening
+        # The model processes tiles at tile_size and upscales back to img_size.
+        # This softens the alpha transition zone proportionally to the
+        # downscale ratio.  We compensate with:
+        #   1. Threshold clip — kill the faint halo fringe (alpha < threshold → 0)
+        #   2. Morphological erosion — pull the remaining soft edge inward
+        #   3. Gaussian re-feather — smooth the hard cut
+        # All three scale with blur_excess = 1 - (tile_size / img_size).
+        # At full resolution (tile == img_size), blur_excess = 0 → no-op.
+        if self.tiler is not None and self.tiler.tile_size < self.img_size:
+            scale_factor = self.tiler.tile_size / self.img_size
+            blur_excess = 1.0 - scale_factor  # 0.0 at 2048, 0.67 at 672, 0.78 at 448
+
+            # 1. Threshold clip — remove faint halo fringe
+            alpha_threshold = blur_excess * 0.15
+            alpha_2d = res_alpha[:, :, 0] if res_alpha.ndim == 3 else res_alpha
+            alpha_2d = np.where(alpha_2d < alpha_threshold, 0.0, alpha_2d).astype(np.float32)
+
+            # 2. Erosion — scale from 0px at 2048 to ~4px at 448
+            max_erode = 4
+            erode_px = max(1, round(blur_excess * max_erode))
             kernel = cv2.getStructuringElement(
                 cv2.MORPH_ELLIPSE, (erode_px * 2 + 1, erode_px * 2 + 1)
             )
-            alpha_2d = res_alpha[:, :, 0] if res_alpha.ndim == 3 else res_alpha
-            alpha_eroded = cv2.erode(alpha_2d, kernel)
-            alpha_eroded = cv2.GaussianBlur(alpha_eroded, (3, 3), 0)
-            res_alpha = alpha_eroded[:, :, np.newaxis] if res_alpha.ndim == 3 else alpha_eroded
+            alpha_2d = cv2.erode(alpha_2d, kernel)
+
+            # 3. Re-feather — wider blur for more erosion
+            blur_k = max(3, erode_px * 2 + 1)
+            if blur_k % 2 == 0:
+                blur_k += 1
+            alpha_2d = cv2.GaussianBlur(alpha_2d, (blur_k, blur_k), 0)
+
+            res_alpha = alpha_2d[:, :, np.newaxis]
+
+            logger.info(
+                "Matte tightening: scale=%.2f, threshold=%.3f, erode=%dpx, blur=%d",
+                scale_factor, alpha_threshold, erode_px, blur_k,
+            )
 
         # A. Clean Matte (Auto-Despeckle)
         if auto_despeckle:
