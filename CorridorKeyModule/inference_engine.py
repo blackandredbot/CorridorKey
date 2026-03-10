@@ -249,9 +249,7 @@ class CorridorKeyEngine:
             # 1. Erosion — scale from 0px at 2048 to ~4px at 448
             max_erode = 4
             erode_px = max(1, round(blur_excess * max_erode))
-            kernel = cv2.getStructuringElement(
-                cv2.MORPH_ELLIPSE, (erode_px * 2 + 1, erode_px * 2 + 1)
-            )
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_px * 2 + 1, erode_px * 2 + 1))
             alpha_2d = cv2.erode(alpha_2d, kernel)
 
             # 2. Re-feather — wider blur for more erosion
@@ -264,7 +262,9 @@ class CorridorKeyEngine:
 
             logger.info(
                 "Matte tightening: scale=%.2f, erode=%dpx, blur=%d",
-                scale_factor, erode_px, blur_k,
+                scale_factor,
+                erode_px,
+                blur_k,
             )
 
         # A. Clean Matte (Auto-Despeckle)

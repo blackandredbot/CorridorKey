@@ -294,6 +294,7 @@ def clean_matte(alpha_np: np.ndarray, area_threshold: int = 300, dilation: int =
 
     return result_alpha
 
+
 def guided_filter_alpha(
     guide: np.ndarray,
     alpha: np.ndarray,
@@ -333,35 +334,34 @@ def guided_filter_alpha(
 
     # Grayscale guide
     if guide.ndim == 3:
-        I = cv2.cvtColor(guide.astype(np.float32), cv2.COLOR_RGB2GRAY)
+        guide_gray = cv2.cvtColor(guide.astype(np.float32), cv2.COLOR_RGB2GRAY)
     else:
-        I = guide.astype(np.float32)
+        guide_gray = guide.astype(np.float32)
 
     p = alpha.astype(np.float32)
     ksize = (2 * radius + 1, 2 * radius + 1)
 
-    mean_I = cv2.boxFilter(I, ddepth=-1, ksize=ksize)
+    mean_g = cv2.boxFilter(guide_gray, ddepth=-1, ksize=ksize)
     mean_p = cv2.boxFilter(p, ddepth=-1, ksize=ksize)
-    mean_Ip = cv2.boxFilter(I * p, ddepth=-1, ksize=ksize)
-    mean_II = cv2.boxFilter(I * I, ddepth=-1, ksize=ksize)
+    mean_gp = cv2.boxFilter(guide_gray * p, ddepth=-1, ksize=ksize)
+    mean_gg = cv2.boxFilter(guide_gray * guide_gray, ddepth=-1, ksize=ksize)
 
-    cov_Ip = mean_Ip - mean_I * mean_p
-    var_I = mean_II - mean_I * mean_I
+    cov_gp = mean_gp - mean_g * mean_p
+    var_g = mean_gg - mean_g * mean_g
 
-    a = cov_Ip / (var_I + eps)
-    b = mean_p - a * mean_I
+    a = cov_gp / (var_g + eps)
+    b = mean_p - a * mean_g
 
     mean_a = cv2.boxFilter(a, ddepth=-1, ksize=ksize)
     mean_b = cv2.boxFilter(b, ddepth=-1, ksize=ksize)
 
-    result = mean_a * I + mean_b
+    result = mean_a * guide_gray + mean_b
     result = np.clip(result, 0.0, 1.0)
 
     if is_3d:
         result = result[:, :, np.newaxis]
 
     return result
-
 
 
 def create_checkerboard(
