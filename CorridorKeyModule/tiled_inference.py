@@ -183,7 +183,7 @@ class VRAMDetector:
 
         if device.type == "cuda":
             props = torch.cuda.get_device_properties(device)
-            total_gb = props.total_mem / (1024**3)
+            total_gb = props.total_memory / (1024**3)
 
             if total_gb >= 24:
                 return None

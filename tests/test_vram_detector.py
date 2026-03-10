@@ -26,7 +26,7 @@ def test_vram_tier_recommendation(vram_gb: float) -> None:
     vram_bytes = int(vram_gb * (1024**3))
 
     mock_props = MagicMock()
-    mock_props.total_mem = vram_bytes
+    mock_props.total_memory = vram_bytes
 
     device = torch.device("cuda:0")
 
