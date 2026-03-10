@@ -213,7 +213,11 @@ def _prompt_inference_settings(
     if tile_size_str not in ("auto", "off") and default_tile_size is None:
         try:
             tile_px = int(tile_size_str)
-            max_overlap = tile_px // 2 - 1
+            # Align to 224 first (same logic as the engine)
+            aligned = (tile_px // 224) * 224
+            if aligned == 0:
+                aligned = 224
+            max_overlap = aligned // 2 - 1
         except ValueError:
             max_overlap = 512
 
