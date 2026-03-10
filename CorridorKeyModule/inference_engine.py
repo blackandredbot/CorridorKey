@@ -230,6 +230,21 @@ class CorridorKeyEngine:
         if res_alpha.ndim == 2:
             res_alpha = res_alpha[:, :, np.newaxis]
 
+        # --- ORIGINAL PIXEL RESTORATION (tiling only) ---
+        # Where alpha == 1.0, the model says "100% subject, zero green screen."
+        # At small tile sizes the model's FG can be brightened due to pos_embed
+        # interpolation, but the original pixels are perfect here — no green
+        # mixing to reconstruct.  Hard swap (no ramp) avoids transition halos.
+        # The downstream despill pass handles any green bounce uniformly.
+        if self.tiler is not None:
+            if input_is_linear:
+                orig_srgb = cu.linear_to_srgb(image)
+            else:
+                orig_srgb = image
+
+            solid_mask = (res_alpha >= 1.0).astype(np.float32)
+            res_fg = res_fg * (1.0 - solid_mask) + orig_srgb * solid_mask
+
         # --- ADVANCED COMPOSITING ---
 
         # A. Clean Matte (Auto-Despeckle)
