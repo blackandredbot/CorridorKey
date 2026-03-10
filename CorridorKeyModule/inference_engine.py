@@ -248,15 +248,22 @@ class CorridorKeyEngine:
         # blend weight.  Where alpha is high (solid subject), bias toward the
         # original — full detail, correct brightness.  Where alpha is low
         # (edges, transparency), bias toward the model's despilled FG — the
-        # learned reconstruction matters there.  The alpha IS the blend ramp,
-        # so the transition is exactly as smooth as the matte itself.
+        # learned reconstruction matters there.
+        #
+        # A power curve (gamma=0.4) sharpens the blend weight so the "model
+        # FG zone" is a narrow band at the edges.  This tightens the matte
+        # for blending purposes only — the saved alpha EXR is untouched.
+        #   0.5 → 0.76,  0.8 → 0.91,  0.9 → 0.96,  0.95 → 0.98
         if self.tiler is not None:
             if input_is_linear:
                 orig_srgb = cu.linear_to_srgb(image)
             else:
                 orig_srgb = image
             orig_despilled = cu.despill(orig_srgb, green_limit_mode="average", strength=despill_strength)
-            fg_despilled = fg_despilled * (1.0 - processed_alpha) + orig_despilled * processed_alpha
+
+            # Sharpen the blend weight — push fractional alpha toward 1.0
+            blend_alpha = np.power(np.clip(processed_alpha, 0.0, 1.0), 0.4)
+            fg_despilled = fg_despilled * (1.0 - blend_alpha) + orig_despilled * blend_alpha
 
         # C. Premultiply (for EXR Output)
         # CONVERT TO LINEAR FIRST! EXRs must house linear color premultiplied by linear alpha.
