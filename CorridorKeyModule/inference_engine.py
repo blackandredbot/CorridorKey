@@ -232,15 +232,20 @@ class CorridorKeyEngine:
 
         # --- ADVANCED COMPOSITING ---
 
-        # A0. Guided-filter matte refinement
-        # Use the original full-res image edges to snap the upscaled alpha
-        # to real luminance boundaries.  This tightens soft edges (especially
-        # hair) that get blurred by the model's resize round-trip.
-        if input_is_linear:
-            guide_img = cu.linear_to_srgb(image)
-        else:
-            guide_img = image
-        res_alpha = cu.guided_filter_alpha(guide_img, res_alpha, radius=32, eps=1e-4)
+        # A0. Matte edge tightening
+        # The model's resize round-trip (original → 2048 → original) softens
+        # the alpha transition zone.  A small morphological erosion pulls the
+        # soft edge inward, then a Gaussian re-feathers it so it doesn't look
+        # hard-cut.  This is image-agnostic — no guide needed.
+        if self.tiler is not None:
+            erode_px = 2
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (erode_px * 2 + 1, erode_px * 2 + 1)
+            )
+            alpha_2d = res_alpha[:, :, 0] if res_alpha.ndim == 3 else res_alpha
+            alpha_eroded = cv2.erode(alpha_2d, kernel)
+            alpha_eroded = cv2.GaussianBlur(alpha_eroded, (3, 3), 0)
+            res_alpha = alpha_eroded[:, :, np.newaxis] if res_alpha.ndim == 3 else alpha_eroded
 
         # A. Clean Matte (Auto-Despeckle)
         if auto_despeckle:
