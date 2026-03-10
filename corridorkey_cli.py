@@ -208,7 +208,14 @@ def _prompt_inference_settings(
             default="auto",
         )
 
+    # Only ask about overlap when tiling is active and tile size was manually set
     overlap = 128
+    if tile_size_str not in ("auto", "off") and default_tile_size is None:
+        overlap = IntPrompt.ask(
+            "Overlap pixels between tiles",
+            default=128,
+        )
+        overlap = max(0, overlap)
 
     settings = InferenceSettings(
         input_is_linear=input_is_linear,
