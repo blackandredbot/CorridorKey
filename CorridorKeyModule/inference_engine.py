@@ -230,6 +230,33 @@ class CorridorKeyEngine:
         if res_alpha.ndim == 2:
             res_alpha = res_alpha[:, :, np.newaxis]
 
+        # --- ALPHA-GUIDED FG BLENDING ---
+        # In solid subject regions (alpha ≈ 1.0), use the original image with
+        # post-process despill — this preserves full input detail and avoids
+        # any tiling artifacts or resolution loss from the model's FG output.
+        # In semi-transparent edge regions (hair, motion blur, translucent
+        # fabric), use the model's learned FG reconstruction — this is where
+        # the neural network's color correction actually matters because green
+        # screen is mixing with subject at a sub-pixel level.
+        if self.tiler is not None:
+            # Prepare the original image in sRGB for blending
+            if input_is_linear:
+                orig_srgb = cu.linear_to_srgb(image)
+            else:
+                orig_srgb = image  # already sRGB
+
+            # Despill the original — simple math, no neural network needed
+            orig_despilled = cu.despill(orig_srgb, green_limit_mode="average", strength=despill_strength)
+
+            # Smooth blend ramp: alpha 0.85 → 0.95 maps to t 0.0 → 1.0
+            # t=1 means "use original", t=0 means "use model FG"
+            EDGE_LOW = 0.85
+            EDGE_HIGH = 0.95
+            t = np.clip((res_alpha - EDGE_LOW) / (EDGE_HIGH - EDGE_LOW), 0.0, 1.0)
+
+            # Blend: solid interior gets original, edges get model reconstruction
+            res_fg = res_fg * (1.0 - t) + orig_despilled * t
+
         # --- ADVANCED COMPOSITING ---
 
         # A. Clean Matte (Auto-Despeckle)
@@ -239,7 +266,9 @@ class CorridorKeyEngine:
             processed_alpha = res_alpha
 
         # B. Despill FG
-        # res_fg is sRGB.
+        # res_fg is sRGB.  When tiling with alpha-guided blending, the solid
+        # interior pixels are already despilled (from the original).  The edge
+        # pixels still come from the model and benefit from this second pass.
         fg_despilled = cu.despill(res_fg, green_limit_mode="average", strength=despill_strength)
 
         # C. Premultiply (for EXR Output)
