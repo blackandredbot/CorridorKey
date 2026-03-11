@@ -42,6 +42,7 @@ from clip_manager import (
     scan_clips,
 )
 from device_utils import resolve_device
+from CorridorKeyModule.depth import DepthKeyingConfig, DepthKeyingEngine
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -236,6 +237,71 @@ def generate_alphas_cmd(ctx: typer.Context) -> None:
     console.print("[bold green]Alpha generation complete.")
 
 
+def _run_depth_inference(
+    clips: list[ClipEntry],
+    device: str,
+    *,
+    depth_threshold: float,
+    depth_falloff: float,
+    refinement_strength: float,
+    flow_method: str,
+    cube_buffer_size: int,
+    parallax_weight: float,
+    persistence_weight: float,
+    stability_weight: float,
+    fusion_mode: str,
+    save_depth_maps: bool,
+    save_flow: bool,
+    depth_fallback: bool,
+) -> None:
+    """Validate depth parameters, build engine, and process all clips."""
+    # Construct DepthKeyingConfig — validation happens in __post_init__
+    try:
+        config = DepthKeyingConfig(
+            flow_method=flow_method,
+            depth_threshold=depth_threshold,
+            depth_falloff=depth_falloff,
+            cube_buffer_size=cube_buffer_size,
+            refinement_strength=refinement_strength,
+            parallax_weight=parallax_weight,
+            persistence_weight=persistence_weight,
+            stability_weight=stability_weight,
+            fusion_mode=fusion_mode,
+            depth_fallback=depth_fallback,
+            save_depth_maps=save_depth_maps,
+            save_flow=save_flow,
+        )
+    except ValueError as exc:
+        console.print(f"[bold red]Invalid depth parameter:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    engine = DepthKeyingEngine(
+        device=device,
+        flow_method=config.flow_method,
+        depth_threshold=config.depth_threshold,
+        depth_falloff=config.depth_falloff,
+        cube_buffer_size=config.cube_buffer_size,
+        refinement_strength=config.refinement_strength,
+        parallax_weight=config.parallax_weight,
+        persistence_weight=config.persistence_weight,
+        stability_weight=config.stability_weight,
+        fusion_mode=config.fusion_mode,
+        depth_fallback=config.depth_fallback,
+        save_depth_maps=config.save_depth_maps,
+        save_flow=config.save_flow,
+    )
+
+    with ProgressContext() as ctx_progress:
+        for clip in clips:
+            ctx_progress.on_clip_start(clip.name, 0)
+            engine.process_clip(
+                clip.clip_dir,
+                on_frame_complete=ctx_progress.on_frame_complete,
+            )
+
+    console.print("[bold green]Depth inference complete.")
+
+
 @app.command("run-inference")
 def run_inference_cmd(
     ctx: typer.Context,
@@ -267,13 +333,96 @@ def run_inference_cmd(
         Optional[float],
         typer.Option("--refiner", help="Refiner strength multiplier (default: prompt)"),
     ] = None,
+    # --- Mode selection ---
+    mode: Annotated[
+        str,
+        typer.Option(help="Pipeline mode: greenscreen (default) or depth"),
+    ] = "greenscreen",
+    # --- Depth-specific options ---
+    depth_threshold: Annotated[
+        float,
+        typer.Option("--depth-threshold", help="Background score cutoff [0.0–1.0]"),
+    ] = 0.5,
+    depth_falloff: Annotated[
+        float,
+        typer.Option("--depth-falloff", help="Soft transition zone width [0.0–0.5]"),
+    ] = 0.05,
+    refinement_strength: Annotated[
+        float,
+        typer.Option("--refinement-strength", help="Mask refinement strength [0.0–1.0]"),
+    ] = 1.0,
+    flow_method: Annotated[
+        str,
+        typer.Option("--flow-method", help="Optical flow algorithm: farneback or raft"),
+    ] = "farneback",
+    cube_buffer_size: Annotated[
+        int,
+        typer.Option("--cube-buffer-size", help="Image cube rolling buffer depth (>= 2)"),
+    ] = 10,
+    parallax_weight: Annotated[
+        float,
+        typer.Option("--parallax-weight", help="Parallax channel weight [0.0–1.0]"),
+    ] = 0.4,
+    persistence_weight: Annotated[
+        float,
+        typer.Option("--persistence-weight", help="Persistence channel weight [0.0–1.0]"),
+    ] = 0.3,
+    stability_weight: Annotated[
+        float,
+        typer.Option("--stability-weight", help="Positional stability channel weight [0.0–1.0]"),
+    ] = 0.3,
+    fusion_mode: Annotated[
+        str,
+        typer.Option("--fusion-mode", help="Signal fusion mode: blend, max, or min"),
+    ] = "blend",
+    save_depth_maps: Annotated[
+        bool,
+        typer.Option("--save-depth-maps/--no-save-depth-maps", help="Write intermediate depth maps"),
+    ] = False,
+    save_flow: Annotated[
+        bool,
+        typer.Option("--save-flow/--no-save-flow", help="Write intermediate flow fields"),
+    ] = False,
+    depth_fallback: Annotated[
+        bool,
+        typer.Option("--depth-fallback/--no-depth-fallback", help="Enable neural depth fallback"),
+    ] = False,
 ) -> None:
     """Run CorridorKey inference on clips with Input + AlphaHint.
 
     Settings can be passed as flags for non-interactive use, or omitted to
     prompt interactively.
+
+    Use --mode depth to run the depth keying pipeline instead of the default
+    green-screen pipeline.
     """
     clips = scan_clips()
+
+    # --- Depth mode routing ---
+    if mode == "depth":
+        _run_depth_inference(
+            clips,
+            device=ctx.obj["device"],
+            depth_threshold=depth_threshold,
+            depth_falloff=depth_falloff,
+            refinement_strength=refinement_strength,
+            flow_method=flow_method,
+            cube_buffer_size=cube_buffer_size,
+            parallax_weight=parallax_weight,
+            persistence_weight=persistence_weight,
+            stability_weight=stability_weight,
+            fusion_mode=fusion_mode,
+            save_depth_maps=save_depth_maps,
+            save_flow=save_flow,
+            depth_fallback=depth_fallback,
+        )
+        return
+
+    if mode != "greenscreen":
+        console.print(f"[bold red]Unknown mode:[/bold red] {mode!r}. Use 'greenscreen' or 'depth'.")
+        raise typer.Exit(code=1)
+
+    # --- Green-screen mode (existing behavior) ---
 
     # despeckle_size excluded — sensible default even in headless mode
     required_flags_set = all(v is not None for v in [linear, despill, despeckle, refiner])
