@@ -147,3 +147,56 @@ class DepthKeyingConfig:
                 f"fallback_confidence_threshold must be in [0.0, 1.0], "
                 f"got {self.fallback_confidence_threshold}"
             )
+
+_VALID_KERNEL_PROFILES = {"linear", "cosine", "gaussian"}
+
+
+@dataclass
+class MotionBlurConfig:
+    """All user-configurable parameters for the motion blur refinement pipeline.
+
+    Validation is performed in ``__post_init__`` — construction with
+    out-of-range values raises ``ValueError`` immediately.
+    """
+
+    blur_threshold: float = 2.0
+    kernel_profile: str = "linear"
+    temporal_smoothing: float = 0.3
+    division_epsilon: float = 1e-4
+    blur_dilation: int = 3
+    save_refined_fg: bool = False
+    plate_search_radius: int = 10
+    plate_alpha_threshold: float = 0.1
+    static_clean_plate: bool = False
+
+    def __post_init__(self) -> None:
+        if self.blur_threshold <= 0:
+            raise ValueError(
+                f"blur_threshold must be > 0, got {self.blur_threshold}"
+            )
+        if self.kernel_profile not in _VALID_KERNEL_PROFILES:
+            raise ValueError(
+                f"kernel_profile must be one of {_VALID_KERNEL_PROFILES}, "
+                f"got {self.kernel_profile!r}"
+            )
+        if not 0.0 < self.temporal_smoothing <= 1.0:
+            raise ValueError(
+                f"temporal_smoothing must be in (0.0, 1.0], got {self.temporal_smoothing}"
+            )
+        if self.division_epsilon <= 0:
+            raise ValueError(
+                f"division_epsilon must be > 0, got {self.division_epsilon}"
+            )
+        if self.blur_dilation < 0:
+            raise ValueError(
+                f"blur_dilation must be >= 0, got {self.blur_dilation}"
+            )
+        if self.plate_search_radius < 1:
+            raise ValueError(
+                f"plate_search_radius must be >= 1, got {self.plate_search_radius}"
+            )
+        if not 0.0 < self.plate_alpha_threshold <= 1.0:
+            raise ValueError(
+                f"plate_alpha_threshold must be in (0.0, 1.0], got {self.plate_alpha_threshold}"
+            )
+

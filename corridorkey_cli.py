@@ -42,7 +42,10 @@ from clip_manager import (
     scan_clips,
 )
 from device_utils import resolve_device
+from backend.ffmpeg_tools import extract_frames, probe_video, stitch_video
 from CorridorKeyModule.depth import DepthKeyingConfig, DepthKeyingEngine
+from CorridorKeyModule.depth.data_models import MotionBlurConfig
+from CorridorKeyModule.depth.motion_blur_refiner import MotionBlurRefiner
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -236,6 +239,216 @@ def generate_alphas_cmd(ctx: typer.Context) -> None:
         generate_alphas(clips, device=ctx.obj["device"], on_clip_start=_on_clip_start_log_only)
     console.print("[bold green]Alpha generation complete.")
 
+def _prompt_depth_settings() -> dict:
+    """Interactively prompt for depth keying parameters.
+
+    Returns a dict of keyword arguments suitable for passing
+    to ``_run_depth_inference()``.
+    """
+    console.print(Panel("Depth Keying Settings", style="bold cyan"))
+
+    # --- Basic settings (always asked) ---
+    flow_method = Prompt.ask(
+        "Flow method",
+        choices=["farneback", "raft"],
+        default="farneback",
+    )
+
+    # depth_threshold with range validation
+    while True:
+        raw = Prompt.ask("Depth threshold [dim](0.0–1.0)[/dim]", default="0.5")
+        try:
+            depth_threshold = float(raw)
+        except ValueError:
+            console.print("[red]Please enter a valid number.[/red]")
+            continue
+        if 0.0 <= depth_threshold <= 1.0:
+            break
+        console.print("[red]Must be in [0.0, 1.0].[/red]")
+
+    # depth_falloff with range validation
+    while True:
+        raw = Prompt.ask("Depth falloff [dim](0.0–0.5)[/dim]", default="0.05")
+        try:
+            depth_falloff = float(raw)
+        except ValueError:
+            console.print("[red]Please enter a valid number.[/red]")
+            continue
+        if 0.0 <= depth_falloff <= 0.5:
+            break
+        console.print("[red]Must be in [0.0, 0.5].[/red]")
+
+    fusion_mode = Prompt.ask(
+        "Fusion mode",
+        choices=["blend", "max", "min"],
+        default="blend",
+    )
+
+    depth_fallback = Confirm.ask("Enable neural depth fallback?", default=False)
+
+    # --- Advanced settings (behind gate) ---
+    parallax_weight = 0.4
+    persistence_weight = 0.3
+    stability_weight = 0.3
+    cube_buffer_size = 10
+    refinement_strength = 1.0
+    save_depth_maps = False
+    save_flow = False
+
+    if Confirm.ask("Advanced settings?", default=False):
+        # Weight validation loop
+        while True:
+            raw_pw = Prompt.ask("Parallax weight [dim](0.0–1.0)[/dim]", default="0.4")
+            raw_per = Prompt.ask("Persistence weight [dim](0.0–1.0)[/dim]", default="0.3")
+            raw_sw = Prompt.ask("Stability weight [dim](0.0–1.0)[/dim]", default="0.3")
+            try:
+                parallax_weight = float(raw_pw)
+                persistence_weight = float(raw_per)
+                stability_weight = float(raw_sw)
+            except ValueError:
+                console.print("[red]Please enter valid numbers for all weights.[/red]")
+                continue
+            if any(not 0.0 <= w <= 1.0 for w in (parallax_weight, persistence_weight, stability_weight)):
+                console.print("[red]Each weight must be in [0.0, 1.0].[/red]")
+                continue
+            if abs(parallax_weight + persistence_weight + stability_weight - 1.0) > 1e-9:
+                console.print("[yellow]Weights must sum to 1.0. Please re-enter.[/yellow]")
+                continue
+            break
+
+        raw_buf = Prompt.ask("Cube buffer size [dim](≥ 2)[/dim]", default="10")
+        try:
+            cube_buffer_size = max(2, int(raw_buf))
+        except ValueError:
+            cube_buffer_size = 10
+
+        raw_ref = Prompt.ask("Refinement strength [dim](0.0–1.0)[/dim]", default="1.0")
+        try:
+            refinement_strength = max(0.0, min(1.0, float(raw_ref)))
+        except ValueError:
+            refinement_strength = 1.0
+
+        save_depth_maps = Confirm.ask("Save depth maps?", default=False)
+        save_flow = Confirm.ask("Save flow fields?", default=False)
+
+    return {
+        "depth_threshold": depth_threshold,
+        "depth_falloff": depth_falloff,
+        "refinement_strength": refinement_strength,
+        "flow_method": flow_method,
+        "cube_buffer_size": cube_buffer_size,
+        "parallax_weight": parallax_weight,
+        "persistence_weight": persistence_weight,
+        "stability_weight": stability_weight,
+        "fusion_mode": fusion_mode,
+        "save_depth_maps": save_depth_maps,
+        "save_flow": save_flow,
+        "depth_fallback": depth_fallback,
+    }
+
+
+def _has_input_frames(clip: ClipEntry) -> bool:
+    """Check if a clip has an Input/ folder containing at least 2 image frames."""
+    input_dir = os.path.join(clip.root_path, "Input")
+    if not os.path.isdir(input_dir):
+        return False
+    exts = (".exr", ".png", ".jpg", ".jpeg", ".tif", ".tiff")
+    frames = [f for f in os.listdir(input_dir) if f.lower().endswith(exts)]
+    return len(frames) >= 2
+
+
+def _extract_video_frames(clip: ClipEntry) -> float | None:
+    """Extract frames from a video input into an ``Input/`` directory.
+
+    Returns the video fps for later stitching use, or ``None`` if extraction
+    was not needed (non-video input or frames already exist).
+    """
+    if clip.input_asset is None or clip.input_asset.type != "video":
+        return None
+
+    input_dir = os.path.join(clip.root_path, "Input")
+
+    # Idempotent: skip if Input/ already has ≥2 image frames
+    if os.path.isdir(input_dir):
+        exts = (".exr", ".png", ".jpg", ".jpeg", ".tif", ".tiff")
+        existing = [f for f in os.listdir(input_dir) if f.lower().endswith(exts)]
+        if len(existing) >= 2:
+            logger.info(f"Clip '{clip.name}': Input/ already has {len(existing)} frames, skipping extraction.")
+            return None
+
+    video_path = clip.input_asset.path
+
+    # Try ffmpeg-based extraction first
+    try:
+        info = probe_video(video_path)
+        fps = info["fps"]
+        extract_frames(video_path, input_dir, pattern="frame_%06d.png")
+        logger.info(f"Clip '{clip.name}': Extracted frames via ffmpeg at {fps} fps.")
+        return fps
+    except RuntimeError:
+        logger.warning(f"Clip '{clip.name}': ffmpeg not available, falling back to cv2 for frame extraction.")
+
+    # cv2 fallback
+    import cv2
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        logger.error(f"Clip '{clip.name}': Could not open video '{video_path}' with cv2.")
+        return None
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+    os.makedirs(input_dir, exist_ok=True)
+
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        out_path = os.path.join(input_dir, f"frame_{frame_idx:06d}.png")
+        cv2.imwrite(out_path, frame)
+        frame_idx += 1
+
+    cap.release()
+
+    if frame_idx == 0:
+        logger.error(f"Clip '{clip.name}': cv2 extracted 0 frames from '{video_path}'.")
+        return None
+
+    logger.info(f"Clip '{clip.name}': Extracted {frame_idx} frames via cv2 at {fps} fps.")
+    return fps
+
+def _stitch_comp_video(clip: ClipEntry, fps: float) -> None:
+    """Stitch ``Comp/`` PNG frames back into a ``Comp.mp4`` video.
+
+    This is called after depth inference when the original input was a video
+    file, so the user gets a video output matching the original format.
+
+    If ffmpeg is not available a warning is logged and the function returns
+    without failing — the user still has the individual Comp frames.
+    """
+    comp_dir = os.path.join(clip.root_path, "Comp")
+
+    if not os.path.isdir(comp_dir):
+        return
+
+    png_files = [f for f in os.listdir(comp_dir) if f.lower().endswith(".png")]
+    if not png_files:
+        return
+
+    comp_video_path = os.path.join(clip.root_path, "Comp.mp4")
+
+    try:
+        stitch_video(comp_dir, comp_video_path, fps=fps)
+        logger.info(f"Clip '{clip.name}': Stitched {len(png_files)} frames into '{comp_video_path}'.")
+    except RuntimeError:
+        logger.warning(
+            f"Clip '{clip.name}': Could not stitch Comp video (ffmpeg not found). "
+            f"Comp frames are still available in '{comp_dir}'."
+        )
+
+
+
+
 
 def _run_depth_inference(
     clips: list[ClipEntry],
@@ -295,7 +508,7 @@ def _run_depth_inference(
         for clip in clips:
             ctx_progress.on_clip_start(clip.name, 0)
             engine.process_clip(
-                clip.clip_dir,
+                clip.root_path,
                 on_frame_complete=ctx_progress.on_frame_complete,
             )
 
@@ -387,6 +600,51 @@ def run_inference_cmd(
         bool,
         typer.Option("--depth-fallback/--no-depth-fallback", help="Enable neural depth fallback"),
     ] = False,
+    # --- Motion blur refinement options ---
+    refine_motion_blur: Annotated[
+        bool,
+        typer.Option("--refine-motion-blur/--no-refine-motion-blur", help="Enable motion blur alpha refinement post-processing"),
+    ] = False,
+    blur_threshold: Annotated[
+        float,
+        typer.Option("--blur-threshold", help="Min flow magnitude to classify as motion-blurred (> 0)"),
+    ] = 2.0,
+    kernel_profile: Annotated[
+        str,
+        typer.Option("--kernel-profile", help="Blur kernel profile: linear, cosine, or gaussian"),
+    ] = "linear",
+    temporal_smoothing: Annotated[
+        float,
+        typer.Option("--temporal-smoothing", help="EMA weight for temporal coherence (0.0, 1.0]"),
+    ] = 0.3,
+    division_epsilon: Annotated[
+        float,
+        typer.Option("--division-epsilon", help="Epsilon guard for division safety (> 0)"),
+    ] = 1e-4,
+    blur_dilation: Annotated[
+        int,
+        typer.Option("--blur-dilation", help="Morphological dilation radius for blur mask (>= 0)"),
+    ] = 3,
+    clean_plate: Annotated[
+        Optional[str],
+        typer.Option("--clean-plate", help="Explicit clean plate file path (EXR or PNG)"),
+    ] = None,
+    save_refined_fg: Annotated[
+        bool,
+        typer.Option("--save-refined-fg/--no-save-refined-fg", help="Write recovered foreground color to RefinedFG/"),
+    ] = False,
+    plate_search_radius: Annotated[
+        int,
+        typer.Option("--plate-search-radius", help="Neighboring frames to search for background donors (>= 1)"),
+    ] = 10,
+    plate_alpha_threshold: Annotated[
+        float,
+        typer.Option("--plate-alpha-threshold", help="Max alpha for reliable background donor (0.0, 1.0]"),
+    ] = 0.1,
+    static_clean_plate: Annotated[
+        bool,
+        typer.Option("--static-clean-plate/--no-static-clean-plate", help="Force legacy single-plate synthesis"),
+    ] = False,
 ) -> None:
     """Run CorridorKey inference on clips with Input + AlphaHint.
 
@@ -457,6 +715,37 @@ def run_inference_cmd(
         )
 
     console.print("[bold green]Inference complete.")
+
+    # --- Motion blur refinement post-processing ---
+    if refine_motion_blur:
+        try:
+            config = MotionBlurConfig(
+                blur_threshold=blur_threshold,
+                kernel_profile=kernel_profile,
+                temporal_smoothing=temporal_smoothing,
+                division_epsilon=division_epsilon,
+                blur_dilation=blur_dilation,
+                plate_search_radius=plate_search_radius,
+                plate_alpha_threshold=plate_alpha_threshold,
+                static_clean_plate=static_clean_plate,
+            )
+        except ValueError as exc:
+            console.print(f"[bold red]Invalid motion blur parameter:[/bold red] {exc}")
+            raise typer.Exit(code=1) from exc
+
+        refiner = MotionBlurRefiner(config, device=ctx.obj["device"])
+
+        with ProgressContext() as ctx_progress:
+            for clip in clips:
+                ctx_progress.on_clip_start(clip.name, 0)
+                refiner.process_clip(
+                    clip.root_path,
+                    clean_plate_path=clean_plate,
+                    save_refined_fg=save_refined_fg,
+                    on_frame_complete=ctx_progress.on_frame_complete,
+                )
+
+        console.print("[bold green]Motion blur refinement complete.")
 
 
 @app.command()
@@ -636,7 +925,7 @@ def interactive_wizard(win_path: str, device: str | None = None) -> None:
             actions.append(f"[bold]v[/bold] — Run VideoMaMa ({len(masked)} with masks)")
             actions.append(f"[bold]g[/bold] — Run GVM (auto-matte {len(raw)} clips)")
         if ready:
-            actions.append(f"[bold]i[/bold] — Run Inference ({len(ready)} ready clips)")
+            actions.append(f"[bold]i[/bold] — Run Inference [dim](greenscreen / depth)[/dim] ({len(ready)} ready)")
         actions.append("[bold]r[/bold] — Re-scan folders")
         actions.append("[bold]q[/bold] — Quit")
 
@@ -658,17 +947,44 @@ def interactive_wizard(win_path: str, device: str | None = None) -> None:
 
         elif choice == "i":
             console.print(Panel("Corridor Key Inference", style="magenta"))
+            mode = Prompt.ask(
+                "Inference mode",
+                choices=["greenscreen", "depth"],
+                default="greenscreen",
+            )
             try:
-                settings = _prompt_inference_settings()
-                with ProgressContext() as ctx_progress:
-                    run_inference(
-                        ready,
-                        device=device,
-                        settings=settings,
-                        on_clip_start=ctx_progress.on_clip_start,
-                        on_frame_complete=ctx_progress.on_frame_complete,
-                    )
-            except (RuntimeError, FileNotFoundError) as e:
+                if mode == "greenscreen":
+                    settings = _prompt_inference_settings()
+                    with ProgressContext() as ctx_progress:
+                        run_inference(
+                            ready,
+                            device=device,
+                            settings=settings,
+                            on_clip_start=ctx_progress.on_clip_start,
+                            on_frame_complete=ctx_progress.on_frame_complete,
+                        )
+                else:
+                    depth_params = _prompt_depth_settings()
+
+                    # Extract video frames before checking eligibility
+                    video_fps_map: dict[str, float] = {}
+                    for c in ready + masked + raw:
+                        fps = _extract_video_frames(c)
+                        if fps is not None:
+                            video_fps_map[c.name] = fps
+
+                    depth_eligible = [c for c in ready + masked + raw if _has_input_frames(c)]
+                    if not depth_eligible:
+                        console.print("[yellow]No clips with Input frames found.[/yellow]")
+                    else:
+                        console.print(f"Running depth inference on {len(depth_eligible)} clips…")
+                        _run_depth_inference(depth_eligible, device=device, **depth_params)
+
+                        # Stitch comp videos for clips that had video inputs
+                        for c in depth_eligible:
+                            if c.name in video_fps_map:
+                                _stitch_comp_video(c, video_fps_map[c.name])
+            except (RuntimeError, FileNotFoundError, ValueError) as e:
                 console.print(f"[bold red]Inference failed:[/bold red] {e}")
             Prompt.ask("Inference batch complete. Press Enter to re-scan")
 
