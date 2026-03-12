@@ -200,3 +200,116 @@ class MotionBlurConfig:
                 f"plate_alpha_threshold must be in (0.0, 1.0], got {self.plate_alpha_threshold}"
             )
 
+
+_VALID_COLOR_SPACE_MODES = {"max_channel", "luminance"}
+
+
+@dataclass
+class PlateSubtractionConfig:
+    """All user-configurable parameters for the plate-subtraction keying pipeline.
+
+    Validation is performed in ``__post_init__`` — construction with
+    out-of-range values raises ``ValueError`` immediately.
+    """
+
+    # --- Subtraction keyer parameters ---
+    difference_threshold: float = 0.05
+    difference_falloff: float = 0.03
+    color_space_mode: str = "max_channel"
+    low_confidence_alpha: float = 1.0
+
+    # --- Clean plate synthesis parameters ---
+    plate_search_radius: int = 15
+    donor_threshold: float = 0.3
+
+    # --- Iterative refinement ---
+    max_iterations: int = 2
+    convergence_threshold: float = 0.001
+
+    # --- Bootstrap parameters (passed through to ImageCubeBuilder / DepthThresholder) ---
+    flow_method: str = "farneback"
+    cube_buffer_size: int = 10
+    fusion_mode: str = "blend"
+    parallax_weight: float = 0.4
+    persistence_weight: float = 0.3
+    stability_weight: float = 0.3
+    depth_threshold: float = 0.5
+    depth_falloff: float = 0.05
+    consistency_threshold: float = 1.5
+
+    # --- Refinement ---
+    refinement_strength: float = 1.0
+
+    # --- Output options ---
+    save_clean_plates: bool = False
+    save_bootstrap: bool = False
+    save_flow: bool = False
+
+    def __post_init__(self) -> None:  # noqa: C901
+        if not 0.0 < self.difference_threshold <= 1.0:
+            raise ValueError(
+                f"difference_threshold must be in (0.0, 1.0], "
+                f"got {self.difference_threshold}"
+            )
+        if not 0.0 <= self.difference_falloff <= 0.5:
+            raise ValueError(
+                f"difference_falloff must be in [0.0, 0.5], "
+                f"got {self.difference_falloff}"
+            )
+        if self.color_space_mode not in _VALID_COLOR_SPACE_MODES:
+            raise ValueError(
+                f"color_space_mode must be one of {_VALID_COLOR_SPACE_MODES}, "
+                f"got {self.color_space_mode!r}"
+            )
+        if not 0.0 <= self.low_confidence_alpha <= 1.0:
+            raise ValueError(
+                f"low_confidence_alpha must be in [0.0, 1.0], "
+                f"got {self.low_confidence_alpha}"
+            )
+        if self.plate_search_radius < 1:
+            raise ValueError(
+                f"plate_search_radius must be >= 1, "
+                f"got {self.plate_search_radius}"
+            )
+        if not 0.0 < self.donor_threshold <= 1.0:
+            raise ValueError(
+                f"donor_threshold must be in (0.0, 1.0], "
+                f"got {self.donor_threshold}"
+            )
+        if not 1 <= self.max_iterations <= 5:
+            raise ValueError(
+                f"max_iterations must be in [1, 5], "
+                f"got {self.max_iterations}"
+            )
+        if self.convergence_threshold <= 0:
+            raise ValueError(
+                f"convergence_threshold must be > 0, "
+                f"got {self.convergence_threshold}"
+            )
+        # Bootstrap parameter validation (same rules as DepthKeyingConfig)
+        if self.flow_method not in _VALID_FLOW_METHODS:
+            raise ValueError(
+                f"flow_method must be one of {_VALID_FLOW_METHODS}, "
+                f"got {self.flow_method!r}"
+            )
+        if self.cube_buffer_size < 2:
+            raise ValueError(
+                f"cube_buffer_size must be >= 2, got {self.cube_buffer_size}"
+            )
+        if self.fusion_mode not in _VALID_FUSION_MODES:
+            raise ValueError(
+                f"fusion_mode must be one of {_VALID_FUSION_MODES}, "
+                f"got {self.fusion_mode!r}"
+            )
+        weight_sum = self.parallax_weight + self.persistence_weight + self.stability_weight
+        if abs(weight_sum - 1.0) > 1e-9:
+            raise ValueError(
+                f"parallax_weight + persistence_weight + stability_weight "
+                f"must equal 1.0, got {weight_sum}"
+            )
+        if not 0.0 <= self.refinement_strength <= 1.0:
+            raise ValueError(
+                f"refinement_strength must be in [0.0, 1.0], "
+                f"got {self.refinement_strength}"
+            )
+

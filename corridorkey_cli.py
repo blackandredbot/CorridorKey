@@ -44,8 +44,9 @@ from clip_manager import (
 from device_utils import resolve_device
 from backend.ffmpeg_tools import extract_frames, probe_video, stitch_video
 from CorridorKeyModule.depth import DepthKeyingConfig, DepthKeyingEngine
-from CorridorKeyModule.depth.data_models import MotionBlurConfig
+from CorridorKeyModule.depth.data_models import MotionBlurConfig, PlateSubtractionConfig
 from CorridorKeyModule.depth.motion_blur_refiner import MotionBlurRefiner
+from CorridorKeyModule.depth.plate_subtraction_engine import PlateSubtractionEngine
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -515,6 +516,72 @@ def _run_depth_inference(
     console.print("[bold green]Depth inference complete.")
 
 
+def _run_plate_subtraction_inference(
+    clips: list[ClipEntry],
+    device: str,
+    *,
+    difference_threshold: float,
+    difference_falloff: float,
+    color_space_mode: str,
+    low_confidence_alpha: float,
+    plate_search_radius: int,
+    donor_threshold: float,
+    max_iterations: int,
+    convergence_threshold: float,
+    flow_method: str,
+    cube_buffer_size: int,
+    fusion_mode: str,
+    parallax_weight: float,
+    persistence_weight: float,
+    stability_weight: float,
+    depth_threshold: float,
+    depth_falloff: float,
+    refinement_strength: float,
+    save_clean_plates: bool,
+    save_bootstrap: bool,
+    save_flow: bool,
+) -> None:
+    """Validate plate-subtraction parameters, build engine, and process all clips."""
+    try:
+        config = PlateSubtractionConfig(
+            difference_threshold=difference_threshold,
+            difference_falloff=difference_falloff,
+            color_space_mode=color_space_mode,
+            low_confidence_alpha=low_confidence_alpha,
+            plate_search_radius=plate_search_radius,
+            donor_threshold=donor_threshold,
+            max_iterations=max_iterations,
+            convergence_threshold=convergence_threshold,
+            flow_method=flow_method,
+            cube_buffer_size=cube_buffer_size,
+            fusion_mode=fusion_mode,
+            parallax_weight=parallax_weight,
+            persistence_weight=persistence_weight,
+            stability_weight=stability_weight,
+            depth_threshold=depth_threshold,
+            depth_falloff=depth_falloff,
+            refinement_strength=refinement_strength,
+            save_clean_plates=save_clean_plates,
+            save_bootstrap=save_bootstrap,
+            save_flow=save_flow,
+        )
+    except ValueError as exc:
+        console.print(f"[bold red]Invalid plate-subtraction parameter:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    engine = PlateSubtractionEngine(config=config, device=device)
+
+    with ProgressContext() as ctx_progress:
+        for clip in clips:
+            ctx_progress.on_clip_start(clip.name, 0)
+            engine.process_clip(
+                clip.root_path,
+                on_frame_complete=ctx_progress.on_frame_complete,
+            )
+
+    console.print("[bold green]Plate subtraction inference complete.")
+
+
 @app.command("run-inference")
 def run_inference_cmd(
     ctx: typer.Context,
@@ -549,7 +616,7 @@ def run_inference_cmd(
     # --- Mode selection ---
     mode: Annotated[
         str,
-        typer.Option(help="Pipeline mode: greenscreen (default) or depth"),
+        typer.Option(help="Pipeline mode: greenscreen (default), depth, or plate-subtraction"),
     ] = "greenscreen",
     # --- Depth-specific options ---
     depth_threshold: Annotated[
@@ -645,6 +712,43 @@ def run_inference_cmd(
         bool,
         typer.Option("--static-clean-plate/--no-static-clean-plate", help="Force legacy single-plate synthesis"),
     ] = False,
+    # --- Plate-subtraction-specific options ---
+    difference_threshold: Annotated[
+        float,
+        typer.Option("--difference-threshold", help="Subtraction difference cutoff (0.0, 1.0]"),
+    ] = 0.05,
+    difference_falloff: Annotated[
+        float,
+        typer.Option("--difference-falloff", help="Soft transition zone width [0.0, 0.5]"),
+    ] = 0.03,
+    donor_threshold: Annotated[
+        float,
+        typer.Option("--donor-threshold", help="Max bootstrap mask value for background donor (0.0, 1.0]"),
+    ] = 0.3,
+    max_iterations: Annotated[
+        int,
+        typer.Option("--max-iterations", help="Iterative refinement passes [1, 5]"),
+    ] = 2,
+    convergence_threshold: Annotated[
+        float,
+        typer.Option("--convergence-threshold", help="Mean alpha diff to stop iterating (> 0)"),
+    ] = 0.001,
+    color_space_mode: Annotated[
+        str,
+        typer.Option("--color-space-mode", help="Difference mode: max_channel or luminance"),
+    ] = "max_channel",
+    low_confidence_alpha: Annotated[
+        float,
+        typer.Option("--low-confidence-alpha", help="Alpha for low-confidence plate regions [0.0, 1.0]"),
+    ] = 1.0,
+    save_clean_plates: Annotated[
+        bool,
+        typer.Option("--save-clean-plates/--no-save-clean-plates", help="Write synthesized clean plates to CleanPlate/"),
+    ] = False,
+    save_bootstrap: Annotated[
+        bool,
+        typer.Option("--save-bootstrap/--no-save-bootstrap", help="Write bootstrap masks to Bootstrap/"),
+    ] = False,
 ) -> None:
     """Run CorridorKey inference on clips with Input + AlphaHint.
 
@@ -652,7 +756,8 @@ def run_inference_cmd(
     prompt interactively.
 
     Use --mode depth to run the depth keying pipeline instead of the default
-    green-screen pipeline.
+    green-screen pipeline. Use --mode plate-subtraction for clean-plate
+    subtraction keying.
     """
     clips = scan_clips()
 
@@ -676,8 +781,35 @@ def run_inference_cmd(
         )
         return
 
+    if mode == "plate-subtraction":
+        _run_plate_subtraction_inference(
+            clips,
+            device=ctx.obj["device"],
+            difference_threshold=difference_threshold,
+            difference_falloff=difference_falloff,
+            color_space_mode=color_space_mode,
+            low_confidence_alpha=low_confidence_alpha,
+            plate_search_radius=plate_search_radius,
+            donor_threshold=donor_threshold,
+            max_iterations=max_iterations,
+            convergence_threshold=convergence_threshold,
+            flow_method=flow_method,
+            cube_buffer_size=cube_buffer_size,
+            fusion_mode=fusion_mode,
+            parallax_weight=parallax_weight,
+            persistence_weight=persistence_weight,
+            stability_weight=stability_weight,
+            depth_threshold=depth_threshold,
+            depth_falloff=depth_falloff,
+            refinement_strength=refinement_strength,
+            save_clean_plates=save_clean_plates,
+            save_bootstrap=save_bootstrap,
+            save_flow=save_flow,
+        )
+        return
+
     if mode != "greenscreen":
-        console.print(f"[bold red]Unknown mode:[/bold red] {mode!r}. Use 'greenscreen' or 'depth'.")
+        console.print(f"[bold red]Unknown mode:[/bold red] {mode!r}. Use 'greenscreen', 'depth', or 'plate-subtraction'.")
         raise typer.Exit(code=1)
 
     # --- Green-screen mode (existing behavior) ---

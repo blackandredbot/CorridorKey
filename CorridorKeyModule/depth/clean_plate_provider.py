@@ -24,7 +24,9 @@ import cv2
 import numpy as np
 
 from CorridorKeyModule.core.color_utils import srgb_to_linear
+from CorridorKeyModule.depth.data_models import FlowResult
 from CorridorKeyModule.depth.exr_io import read_depth_map
+from CorridorKeyModule.depth.optical_flow import accumulate_flow
 
 
 class CleanPlateProvider:
@@ -157,6 +159,15 @@ class CleanPlateProvider:
         start = max(0, frame_idx - self.search_radius)
         end = min(n_frames, frame_idx + self.search_radius + 1)
 
+        # Wrap raw flow arrays as FlowResult objects for the shared utility.
+        _dummy = np.empty((0,), dtype=np.float32)
+        flow_results = [
+            FlowResult(forward_flow=f, backward_flow=_dummy, occlusion_mask=_dummy)
+            if f is not None
+            else None
+            for f in flows
+        ]
+
         for d in range(start, end):
             if d == frame_idx:
                 # Current frame is also a candidate
@@ -164,7 +175,7 @@ class CleanPlateProvider:
                 warped_alpha = alphas[d]
             else:
                 # Compute cumulative flow from donor d to frame_idx
-                cumulative_flow = self._accumulate_flow(d, frame_idx, flows, h, w)
+                cumulative_flow = accumulate_flow(d, frame_idx, flow_results, h, w)
                 if cumulative_flow is None:
                     continue
 
@@ -246,43 +257,3 @@ class CleanPlateProvider:
 
         return plate.astype(np.float32, copy=False)
 
-    @staticmethod
-    def _accumulate_flow(
-        src: int,
-        dst: int,
-        flows: list[np.ndarray | None],
-        h: int,
-        w: int,
-    ) -> np.ndarray | None:
-        """Compute cumulative optical flow from frame ``src`` to frame ``dst``.
-
-        Parameters
-        ----------
-        src, dst : int
-            Source and destination frame indices.
-        flows : list
-            Forward flow fields. flows[i] maps frame i -> frame i+1.
-        h, w : int
-            Spatial dimensions.
-
-        Returns
-        -------
-        np.ndarray or None
-            [H, W, 2] cumulative flow, or None if any intermediate flow is missing.
-        """
-        cumulative = np.zeros((h, w, 2), dtype=np.float32)
-
-        if src < dst:
-            # Forward: chain flows[src] + flows[src+1] + ... + flows[dst-1]
-            for i in range(src, dst):
-                if i >= len(flows) or flows[i] is None:
-                    return None
-                cumulative += flows[i]
-        elif src > dst:
-            # Backward: negate and chain flows[dst] + ... + flows[src-1]
-            for i in range(dst, src):
-                if i >= len(flows) or flows[i] is None:
-                    return None
-                cumulative -= flows[i]
-
-        return cumulative

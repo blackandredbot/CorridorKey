@@ -12,6 +12,8 @@ from .exr_io import read_depth_map as read_depth_map
 from .exr_io import read_flow_field as read_flow_field
 from .exr_io import write_depth_map as write_depth_map
 from .exr_io import write_flow_field as write_flow_field
+from .exr_io import read_rgb_exr as read_rgb_exr
+from .exr_io import write_rgb_exr as write_rgb_exr
 from .image_cube import ImageCubeBuilder as ImageCubeBuilder
 from .mask_refiner import MaskRefiner as MaskRefiner
 from .neural_fallback import NeuralDepthFallback as NeuralDepthFallback
@@ -21,3 +23,6 @@ from .blur_region_detector import BlurRegionDetector as BlurRegionDetector
 from .clean_plate_provider import CleanPlateProvider as CleanPlateProvider
 from .temporal_coherence import TemporalCoherenceFilter as TemporalCoherenceFilter
 from .motion_blur_refiner import MotionBlurRefiner as MotionBlurRefiner
+from .subtraction_keyer import SubtractionKeyer as SubtractionKeyer
+from .plate_subtraction_engine import PlateSubtractionEngine as PlateSubtractionEngine
+from .data_models import PlateSubtractionConfig as PlateSubtractionConfig

@@ -278,3 +278,47 @@ class OpticalFlowEngine:
 
         occlusion_mask = (error > self.consistency_threshold).astype(np.float32)
         return occlusion_mask
+
+def accumulate_flow(
+    src_idx: int,
+    dst_idx: int,
+    flow_results: list[FlowResult | None],
+    h: int,
+    w: int,
+) -> np.ndarray | None:
+    """Chain per-frame forward flows from *src_idx* to *dst_idx*.
+
+    Parameters
+    ----------
+    src_idx, dst_idx : int
+        Source and destination frame indices.
+    flow_results : list[FlowResult | None]
+        Forward flow fields between consecutive frames.
+        ``flow_results[i]`` contains the flow from frame *i* to frame *i+1*.
+        May be ``None`` if flow was not computed for that pair.
+    h, w : int
+        Spatial dimensions for the output flow field.
+
+    Returns
+    -------
+    np.ndarray or None
+        ``[H, W, 2]`` float32 cumulative flow from *src* to *dst*,
+        or ``None`` if any link in the chain is missing.
+    """
+    cumulative = np.zeros((h, w, 2), dtype=np.float32)
+
+    if src_idx < dst_idx:
+        # Forward: chain flows[src] + flows[src+1] + ... + flows[dst-1]
+        for i in range(src_idx, dst_idx):
+            if i >= len(flow_results) or flow_results[i] is None:
+                return None
+            cumulative += flow_results[i].forward_flow
+    elif src_idx > dst_idx:
+        # Backward: negate and chain flows[dst] + ... + flows[src-1]
+        for i in range(dst_idx, src_idx):
+            if i >= len(flow_results) or flow_results[i] is None:
+                return None
+            cumulative -= flow_results[i].forward_flow
+
+    return cumulative
+

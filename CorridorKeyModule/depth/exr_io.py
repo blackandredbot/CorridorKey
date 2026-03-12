@@ -147,3 +147,61 @@ def read_flow_field(path: str) -> np.ndarray:
         )
 
     return img[:, :, :2].astype(np.float32, copy=False)
+
+# ------------------------------------------------------------------
+# Three-channel RGB images (clean plates, etc.)
+# ------------------------------------------------------------------
+
+def write_rgb_exr(path: str, data: np.ndarray) -> None:
+    """Write a 3-channel float32 image to a 32-bit float EXR file.
+
+    Parameters
+    ----------
+    path : str
+        Destination file path (should end in ``.exr``).
+    data : np.ndarray
+        RGB image of shape ``[H, W, 3]`` with dtype ``float32``.
+    """
+    if data.ndim != 3 or data.shape[2] != 3:
+        raise ValueError(
+            f"Expected 3-D array [H, W, 3], got shape {data.shape}"
+        )
+    arr = data.astype(np.float32, copy=False)
+    cv2.imwrite(path, arr, _EXR_FLOAT32_FLAGS)
+
+
+def read_rgb_exr(path: str) -> np.ndarray:
+    """Read a 3-channel float32 image from a 32-bit float EXR file.
+
+    Parameters
+    ----------
+    path : str
+        Source EXR file path.
+
+    Returns
+    -------
+    np.ndarray
+        ``[H, W, 3]`` float32 array.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *path* does not exist.
+    RuntimeError
+        If OpenCV cannot decode the file.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"EXR file not found: {path}")
+
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise RuntimeError(f"Failed to read EXR file: {path}")
+
+    # OpenCV loads multi-channel EXR as [H, W, C].
+    if img.ndim == 2:
+        raise RuntimeError(
+            f"Expected 3-channel EXR, got single-channel: {path}"
+        )
+
+    return img[:, :, :3].astype(np.float32, copy=False)
+
