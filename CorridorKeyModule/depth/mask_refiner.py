@@ -71,10 +71,7 @@ class MaskRefiner:
 
         # Blend between raw and refined based on refinement_strength
         if self.refinement_strength < 1.0:
-            result = (
-                alpha * (1.0 - self.refinement_strength)
-                + refined * self.refinement_strength
-            )
+            result = alpha * (1.0 - self.refinement_strength) + refined * self.refinement_strength
             return np.clip(result, 0.0, 1.0).astype(np.float32)
 
         return refined
@@ -83,14 +80,69 @@ class MaskRefiner:
     # Internal refinement steps
     # ------------------------------------------------------------------
 
-    def _apply_guided_filter(
-        self, alpha: np.ndarray, rgb_guide: np.ndarray
-    ) -> np.ndarray:
-        """Edge-aware guided filter using the RGB frame as guide."""
+    def _apply_guided_filter(self, alpha: np.ndarray, rgb_guide: np.ndarray) -> np.ndarray:
+        """Edge-aware guided filter using the RGB frame as guide.
+
+        Tries ``cv2.ximgproc.guidedFilter`` first (requires opencv-contrib).
+        Falls back to a pure numpy/cv2 box-filter implementation when the
+        contrib module is unavailable.
+        """
         radius = 8
         eps = 1e-4
         guide = rgb_guide.astype(np.float32)
-        return cv2.ximgproc.guidedFilter(guide, alpha, radius, eps)
+
+        try:
+            return cv2.ximgproc.guidedFilter(guide, alpha, radius, eps)
+        except AttributeError:
+            return self._guided_filter_numpy(guide, alpha, radius, eps)
+
+    @staticmethod
+    def _guided_filter_numpy(guide: np.ndarray, src: np.ndarray, radius: int, eps: float) -> np.ndarray:
+        """Guided filter using only cv2.boxFilter (no opencv-contrib needed).
+
+        Implements the O(N) box-filter formulation from *Guided Image Filtering*
+        (He et al., 2013).  When the guide is multi-channel the filter is
+        applied per-channel and the results are averaged, which closely
+        approximates the full colour-guided formulation.
+        """
+        ksize = (2 * radius + 1, 2 * radius + 1)
+
+        def _box(img: np.ndarray) -> np.ndarray:
+            return cv2.boxFilter(img, ddepth=-1, ksize=ksize)
+
+        # Per-channel guided filter, averaged across channels
+        if guide.ndim == 3:
+            channels = guide.shape[2]
+            accum = np.zeros_like(src)
+            for c in range(channels):
+                accum += MaskRefiner._guided_filter_single(guide[:, :, c], src, _box, eps)
+            return (accum / channels).astype(np.float32)
+
+        return MaskRefiner._guided_filter_single(guide, src, _box, eps)
+
+    @staticmethod
+    def _guided_filter_single(
+        guide_ch: np.ndarray,
+        src: np.ndarray,
+        box_fn,
+        eps: float,
+    ) -> np.ndarray:
+        """Single-channel guided filter core."""
+        mean_g = box_fn(guide_ch)
+        mean_s = box_fn(src)
+        corr_gs = box_fn(guide_ch * src)
+        corr_gg = box_fn(guide_ch * guide_ch)
+
+        var_g = corr_gg - mean_g * mean_g
+        cov_gs = corr_gs - mean_g * mean_s
+
+        a = cov_gs / (var_g + eps)
+        b = mean_s - a * mean_g
+
+        mean_a = box_fn(a)
+        mean_b = box_fn(b)
+
+        return (mean_a * guide_ch + mean_b).astype(np.float32)
 
     def _despeckle(self, alpha: np.ndarray) -> np.ndarray:
         """Remove connected foreground regions smaller than despeckle_size."""
@@ -100,9 +152,7 @@ class MaskRefiner:
         # Binarize at 0.5 threshold
         mask_fg = (alpha > 0.5).astype(np.uint8) * 255
 
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-            mask_fg, connectivity=8
-        )
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_fg, connectivity=8)
 
         # Build a mask keeping only large-enough foreground components
         keep_mask = np.zeros_like(mask_fg)
@@ -122,9 +172,7 @@ class MaskRefiner:
         # Invert: background holes become foreground components
         inv_mask = (alpha <= 0.5).astype(np.uint8) * 255
 
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-            inv_mask, connectivity=8
-        )
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(inv_mask, connectivity=8)
 
         # Identify small hole components (skip label 0 = the main background)
         fill_mask = np.zeros_like(inv_mask)
@@ -150,9 +198,7 @@ class MaskRefiner:
 
         # Scale erosion kernel size by correction magnitude (1-5 pixels)
         erode_size = max(1, int(round(correction * 5)))
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (erode_size * 2 + 1, erode_size * 2 + 1)
-        )
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size * 2 + 1, erode_size * 2 + 1))
         eroded = cv2.erode(alpha, kernel)
 
         # Gaussian re-feather — blur size proportional to correction
