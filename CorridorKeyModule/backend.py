@@ -24,6 +24,7 @@ DEFAULT_IMG_SIZE = 2048
 BACKEND_ENV_VAR = "CORRIDORKEY_BACKEND"
 VALID_BACKENDS = ("auto", "torch", "mlx")
 
+# Update HF_REPO_ID and HF_CHECKPOINT_FILENAME if a new model version is released.
 HF_REPO_ID = "nikopueringer/CorridorKey_v1.0"
 HF_CHECKPOINT_FILENAME = "CorridorKey.pth"
 
