@@ -441,9 +441,9 @@ def test_ai_dev_page_has_required_content() -> None:
         assert tool in content, f"Tool '{tool}' not found in ai-assisted-development.md"
 
     # Contributions note
-    assert any(
-        word in content.lower() for word in ("contributions", "welcome", "contributing")
-    ), "No contributions/welcome note found in ai-assisted-development.md"
+    assert any(word in content.lower() for word in ("contributions", "welcome", "contributing")), (
+        "No contributions/welcome note found in ai-assisted-development.md"
+    )
 
 
 def test_index_page_links_to_ai_dev() -> None:
