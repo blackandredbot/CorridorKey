@@ -9,7 +9,7 @@ these colors, and even modern "AI Roto" solutions typically output a harsh
 binary mask, destroying the delicate semi-transparent pixels needed for a
 realistic composite.
 
-![CorridorKey comparison](https://github.com/user-attachments/assets/1fb27ea8-bc91-4ebc-818f-5a3b5585af08)
+<video src="https://github.com/user-attachments/assets/1fb27ea8-bc91-4ebc-818f-5a3b5585af08" controls autoplay loop muted width="100%"></video>
 
 CorridorKey solves this *unmixing* problem. You input a raw green screen frame,
 and the neural network completely separates the foreground object from the green
