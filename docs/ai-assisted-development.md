@@ -114,7 +114,7 @@ Pick your tool below for CorridorKey-specific setup instructions.
 
 === "Kiro"
 
-    Kiro uses **steering files** stored in `.kiro/steering/*.md` to
+    [Kiro](https://kiro.dev) uses **steering files** stored in `.kiro/steering/*.md` to
     provide persistent project context. Each file is a Markdown
     document that Kiro loads according to one of three inclusion
     modes:
