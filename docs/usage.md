@@ -30,7 +30,7 @@ Two optional modules are bundled for automatic hint generation inside
 If you choose VideoMaMa, place your mask hint in the `VideoMamaMaskHint/`
 folder that the wizard creates for your shot.
 
-!!! note "Show these projects some love"
+!!! star "Show these projects some love"
     GVM and VideoMaMa are open-source research projects. Please star their
     repos: [VideoMaMa](https://github.com/cvlab-kaist/VideoMaMa) and
     [GVM](https://github.com/aim-uofa/GVM).

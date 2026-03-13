@@ -151,6 +151,34 @@ Pick your tool below for CorridorKey-specific setup instructions.
       `VideoMaMaInferenceModule/`.
     ```
 
+    **Quick-start prompt:** Instead of setting everything up
+    manually, paste this into Kiro chat to have it clone the repo,
+    read `AGENTS.md`, and scaffold steering files, hooks, and skills
+    for you automatically:
+
+    ```text
+    Clone https://github.com/nikopueringer/CorridorKey.git and open
+    the workspace. Read AGENTS.md and docs/LLM_HANDOVER.md, then:
+
+    1. Create a .kiro/steering/corridorkey-context.md steering file
+       that summarises the project rules, key file map, dev commands,
+       and prohibited actions from AGENTS.md. Set it to always-on.
+
+    2. Create a .kiro/steering/color-pipeline.md conditional steering
+       file (fileMatch: "**/color_utils.py") that covers the sRGB
+       transfer function rules and EXR pipeline math from
+       LLM_HANDOVER.md.
+
+    3. Create agent hooks:
+       - A postToolUse hook on write tools that reminds you to run
+         `uv run ruff check` after editing Python files.
+       - A fileEdited hook on *.py that runs `uv run ruff format
+         --check` to catch formatting drift.
+
+    4. Run `uv sync --group dev` to set up the dev environment, then
+       `uv run pytest -m "not gpu"` to verify everything passes.
+    ```
+
 === "Claude Code"
 
     Claude Code loads a **`CLAUDE.md`** file from the repository root
