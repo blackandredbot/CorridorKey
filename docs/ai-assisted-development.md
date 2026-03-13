@@ -77,6 +77,41 @@ Core dev commands to keep handy:
 Each AI coding assistant has its own way of loading project context.
 Pick your tool below for CorridorKey-specific setup instructions.
 
+=== "Antigravity"
+
+    [Antigravity](https://developers.google.com/antigravity) is
+    Google's agent-first IDE. It reads project context from two
+    files, checked in priority order:
+
+    1. **`AGENTS.md`** (repo root) — cross-platform standard,
+       highest priority.
+    2. **`GEMINI.md`** (repo root or `.gemini/`) —
+       Antigravity-native config for the Gemini model.
+
+    Because CorridorKey already ships an `AGENTS.md`, Antigravity
+    picks up the project layout, key rules, and dev commands
+    automatically — no extra setup needed.
+
+    If you want to add Antigravity-specific directives beyond what
+    `AGENTS.md` covers, create a `GEMINI.md`:
+
+    ```markdown title="GEMINI.md"
+    # CorridorKey — Antigravity Context
+
+    AGENTS.md at the repo root is loaded automatically and takes
+    precedence. For the deep architecture walkthrough, also read
+    docs/LLM_HANDOVER.md.
+
+    Key rules:
+    - Tensors are [0.0, 1.0] float. Foreground sRGB, alpha linear.
+    - Use piecewise sRGB functions, never pow(x, 2.2).
+    - Do not modify gvm_core/ or VideoMaMaInferenceModule/.
+    ```
+
+    !!! note
+        CorridorKey was originally developed using Antigravity as
+        the primary AI coding environment.
+
 === "Kiro"
 
     Kiro uses **steering files** stored in `.kiro/steering/*.md` to
