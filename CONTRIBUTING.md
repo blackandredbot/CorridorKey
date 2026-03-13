@@ -40,12 +40,6 @@ Most tests run in a few seconds and don't need a GPU or model weights. Tests tha
 
 If you are contributing on an Apple Silicon Mac, there are a few extra things to be aware of.
 
-**`uv.lock` drift:** Running `uv run pytest` on macOS regenerates `uv.lock` with macOS-specific dependency markers. **Do not commit this file.** Before staging your changes, always run:
-
-```bash
-git restore uv.lock
-```
-
 **Selecting the compute backend:** CorridorKey auto-detects MPS on Apple Silicon. To test with the MLX backend or force CPU, set the environment variable before running:
 
 ```bash
