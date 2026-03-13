@@ -154,6 +154,16 @@ Documentation files to check:
 - `docs/LLM_HANDOVER.md`
 - All pages under `docs/`
 
+### Docs Site (Zensical)
+
+The documentation site is built with **[Zensical](https://zensical.org)**, configured via `zensical.toml`. Key rules when editing docs pages:
+
+- **Snippets for shared content.** Reusable blocks live in `docs/_snippets/` and are included with `--8<-- "docs/_snippets/<name>.md"`. If you find the same content repeated across pages, extract it into a snippet rather than duplicating it.
+- **Icon shortcodes require the `pymdownx.emoji` extension** with `emoji_index` and `emoji_generator` set to the `zensical.extensions.emoji` namespace (not the default `pymdownx` one). Without this, `:material-*:` and `:octicons-*:` shortcodes render as raw text.
+- **Grid cards** (`<div class="grid cards" markdown>`) require both `attr_list` and `md_in_html` extensions in `zensical.toml`.
+- **Videos from GitHub** use `<video>` tags, not `![image]()` markdown syntax. GitHub user-attachment URLs ending in `.mp4` will not render with image syntax.
+- **Zensical is not Material for MkDocs.** The syntax is very similar but the extension namespaces differ. Always check `zensical.org/docs/` when something doesn't render as expected.
+
 ## AI Directives
 
 - **Skip basic tutorials.** The user is a VFX professional and coder. Dive straight into advanced implementation guidance, but document math thoroughly.
