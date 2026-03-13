@@ -28,14 +28,7 @@ this codebase, including PR contributions.
 
 ## Dev Setup
 
-```bash
-git clone https://github.com/nikopueringer/CorridorKey.git
-cd CorridorKey
-uv sync --group dev    # installs all dependencies + dev tools (pytest, ruff)
-```
-
-That's it. No manual virtualenv creation, no `pip install` — uv handles
-everything.
+--8<-- "docs/_snippets/dev-setup.md"
 
 ---
 
@@ -60,16 +53,6 @@ automatically if no GPU is available.
 
 If you are contributing on an Apple Silicon Mac, there are a few extra things to
 be aware of.
-
-### `uv.lock` Drift
-
-Running `uv run pytest` on macOS regenerates `uv.lock` with macOS-specific
-dependency markers. **Do not commit this file.** Before staging your changes,
-always run:
-
-```bash
-git restore uv.lock
-```
 
 ### Backend Selection
 

@@ -59,11 +59,7 @@ with inference code, compositing math, or EXR pipeline work.
 Get a working dev environment and point your AI assistant at the
 project context — this works with any tool.
 
-```bash
-git clone https://github.com/nikopueringer/CorridorKey.git
-cd CorridorKey
-uv sync --group dev    # installs all dependencies + dev tools
-```
+--8<-- "docs/_snippets/dev-setup.md"
 
 Once the repo is cloned, open `AGENTS.md` in your AI assistant as
 the first step. It gives the assistant the project layout, key
@@ -72,11 +68,7 @@ context, also point it at `docs/LLM_HANDOVER.md`.
 
 Core dev commands to keep handy:
 
-```bash
-uv run pytest                # run all tests
-uv run ruff check            # check for lint errors
-uv run ruff format --check   # check formatting (no changes)
-```
+--8<-- "docs/_snippets/dev-commands.md"
 
 ---
 
