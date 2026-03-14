@@ -102,8 +102,13 @@ The project uses **[Ruff](https://docs.astral.sh/ruff/)** for both linting and f
 
 ## Prohibited Actions
 
-1. **Do not apply a pure gamma 2.2 curve.** Always use the piecewise sRGB transfer functions in `color_utils.py`. A naive `pow(x, 2.2)` breaks the toe region and produces incorrect compositing results.
-2. **Do not modify files inside `gvm_core/` or `VideoMaMaInferenceModule/`.** These are third-party research modules kept close to upstream. Changes should be made in wrapper code or upstream PRs.
+1. **Do not modify `CorridorKeyModule/core/model_transformer.py`.** Any change breaks checkpoint weight loading. There is no training infrastructure in this repo to validate architectural changes.
+2. **Do not modify `CorridorKeyModule/core/color_utils.py`.** Subtle colour math bugs produce silently incorrect compositing output that is very hard to catch in automated tests.
+3. **Do not modify `CorridorKeyModule/inference_engine.py`.** Resizing, normalisation, and tensor handling are calibrated exactly to the model's training distribution.
+4. **Do not change `img_size = 2048`** in `inference_engine.py` or `backend.py`. The model was trained exclusively at 2048×2048; any other resolution silently produces wrong results.
+5. **Do not reorder sRGB/linear conversion steps** in `clip_manager.py` or `color_utils.py`. Wrong order produces crushed shadows, dark fringes, and broken composites. The piecewise sRGB curve is not interchangeable with gamma 2.2.
+6. **Do not apply a pure gamma 2.2 curve.** Always use the piecewise sRGB transfer functions in `color_utils.py`. A naive `pow(x, 2.2)` breaks the toe region and produces incorrect compositing results.
+7. **Do not modify files inside `gvm_core/` or `VideoMaMaInferenceModule/`.** These are third-party research modules kept close to upstream. Changes should be made in wrapper code or upstream PRs.
 
 ## PR Workflow & GitHub Templates
 

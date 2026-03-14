@@ -73,6 +73,17 @@ fallback for those ops:
 export PYTORCH_ENABLE_MPS_FALLBACK=1
 ```
 
+### Lockfile Stability
+
+!!! note "No more `uv.lock` drift"
+    Earlier versions of the project suffered from cross-platform `uv.lock`
+    drift — running `uv run pytest` on macOS would regenerate the lockfile
+    with macOS-specific dependency markers, causing spurious diffs.
+
+    This was fixed in [#133](https://github.com/nikopueringer/CorridorKey/pull/133)
+    by moving platform-specific backends (CUDA, MLX) into optional extras.
+    The lockfile is now platform-stable and safe to commit.
+
 ---
 
 ## Linting and Formatting
